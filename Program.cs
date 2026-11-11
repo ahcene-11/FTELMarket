@@ -1,5 +1,8 @@
 using FTELMarket.Data;
+using FTELMarket.Services;
+using FTELMarket.Settings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +29,22 @@ builder.Services.AddCors(options =>
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
+});
+
+
+//config de flakyapp
+builder.Services
+    // permet le build du pattern Options
+    .AddOptions<FlakySettings>()
+     
+    .BindConfiguration(nameof(FlakySettings))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddHttpClient<FlakyService>((sp, client) =>
+{
+    var settings = sp.GetRequiredService<IOptions<FlakySettings>>().Value;
+    client.BaseAddress = new Uri(settings.BaseAddress);
 });
 
 // Construction de l'application
