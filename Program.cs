@@ -4,12 +4,16 @@ using FTELMarket.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Configuration de Serilog
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
+    .MinimumLevel.Override(
+        "Microsoft.EntityFrameworkCore.Database.Command",
+        LogEventLevel.Warning) // pour ne pas loguer les requêtes SQL
     .WriteTo.File("Logs/ftelmarket-.log",
          rollingInterval: RollingInterval.Day)
     .CreateLogger();
@@ -55,7 +59,8 @@ builder.Services.AddHttpClient<FlakyService>((sp, client) =>
 {
     var settings = sp.GetRequiredService<IOptions<FlakySettings>>().Value;
     client.BaseAddress = new Uri(settings.BaseAddress);
-});
+})
+.AddStandardResilienceHandler(); // utilise Polly en interne
 
 
 
