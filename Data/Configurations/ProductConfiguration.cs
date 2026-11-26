@@ -30,5 +30,14 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
             .WithMany(c => c.Products)
             .HasForeignKey(p => p.CategoryId)
             .IsRequired();
+
+        builder.Property(p => p.ExternalId)
+            .IsRequired(false);
+        builder.HasIndex(p => p.ExternalId)
+            .IsUnique()
+            .HasFilter("[ExternalId] IS NOT NULL");
+
+        builder.Property(p => p.Reference)
+            .HasMaxLength(50);
     }
 }

@@ -2,6 +2,7 @@ using FTELMarket.Data;
 using FTELMarket.DTOs;
 using Microsoft.EntityFrameworkCore;
 using FTELMarket.Models;
+using Azure;
 
 namespace FTELMarket.Services;
 
@@ -110,6 +111,144 @@ public async Task SynchronizeCustomersAsync()
             throw;
         }
 }
+
+    public async Task<List<ExternalProductDto>> GetAllProductsAsync()
+    {
+        // Récupérer tous les produits depuis l'API externe
+        var products = new List<ExternalProductDto>();
+
+        int page = 1;
+        int pageSize = 50;
+        int total;
+
+        do
+        {
+            var response = await client.GetFromJsonAsync<PagedResponse<ExternalProductDto>>(
+                $"api/products?page={page}&pageSize={pageSize}");
+
+                if(response == null)
+                {
+                    throw new InvalidOperationException("Réponse vide de Flaky API.");
+                }
+
+                products.AddRange(response.Items);
+
+                total = response.Total;
+                page++;
+
+            
+        } while (products.Count < total);
+
+        return products;
+    }
+
+    public async Task SynchronizeProductsAsync()
+    {
+        try
+        {
+        logger.LogInformation("Démarrage de la synchronisation des produits avec l'API externe.");
+
+        var externalProducts = await GetAllProductsAsync();
+
+        logger.LogInformation(
+            "{Count} produits récuperés depuis l'API externe. ",
+            externalProducts.Count);
+        
+        var localProducts = await context.Products
+            .Include(p => p.Category)
+            .ToListAsync();
+        
+        logger.LogInformation(
+            "{Count} produits présents dans la base locale. ",
+            localProducts.Count);
+
+        //dictionnaire pour faciliter la comparaison
+        var externalProductsById = externalProducts.ToDictionary(p => p.Id);
+
+        var localProductsByExternalId = localProducts
+             .Where(p => p.ExternalId.HasValue)
+             .ToDictionary(p => p.ExternalId!.Value);
+        
+
+        //  Récupération des catégories
+        var categories = await context.Categories.ToListAsync();
+
+        var categoriesByName = categories.ToDictionary(
+            c => c.Name,
+            StringComparer.OrdinalIgnoreCase);
+        
+        int created = 0;
+        int updated = 0;
+        int deleted = 0;
+
+        // Création et mise a jour des produits
+        foreach (var externalProduct in externalProducts)
+        {
+            //recherche ou creation de la categorie
+            if(!categoriesByName.TryGetValue(externalProduct.Category, out var category))
+            {
+                category = new Category
+                {
+                    Name = externalProduct.Category
+                };
+                context.Categories.Add(category);
+                categoriesByName.Add(category.Name, category);
+            }
+            // recherche du produit local 
+            if (localProductsByExternalId.TryGetValue(
+                externalProduct.Id, out var localProduct))
+            {
+                //mise a jour
+                localProduct.Name = externalProduct.Name;
+                localProduct.Reference = externalProduct.Reference;
+                localProduct.Price = externalProduct.Price;
+                localProduct.StockQuantity = externalProduct.Stock;
+                localProduct.Category = category;
+
+                updated++;
+            }
+            else
+            {
+                //creation du produit
+                var newProduct = new Product
+                {
+                    ExternalId = externalProduct.Id,
+                    Name = externalProduct.Name,
+                    Reference = externalProduct.Reference,
+                    Price = externalProduct.Price,
+                    StockQuantity = externalProduct.Stock,
+                    Category = category,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                context.Products.Add(newProduct);
+                created++;
+            }
+        }
+        // Suppression des produits absents de l'api
+        foreach(var localProduct in localProducts)
+        {
+            if(!localProduct.ExternalId.HasValue &&
+                !externalProductsById.ContainsKey(localProduct.ExternalId.Value))
+            {
+                context.Products.Remove(localProduct);
+                deleted++;
+            }
+        }
+        // Enregistrer les changements dans la base de données
+        await context.SaveChangesAsync();
+
+        logger.LogInformation(
+            "Synchronisation terminée. Créés : {Created}, Mis à jour : {Updated}, Supprimés : {Deleted}.",
+            created, updated, deleted);
+
+        logger.LogInformation("Synchronisation des produits avec l'API externe terminée.");
+    }
+    catch(Exception ex)
+        {
+            logger.LogError(ex, "Une erreur est survenue lors de la synchronisation des produits avec l'API externe.");
+            throw;
+        }
+    }
 
 }
 
